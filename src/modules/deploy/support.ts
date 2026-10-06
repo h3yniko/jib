@@ -1,4 +1,4 @@
-import { stat, symlink, unlink } from 'node:fs/promises'
+import { readlink, stat, symlink, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { App } from '@jib/config'
 import { dockerParseComposeServices, dockerWriteOverride } from '@jib/docker'
@@ -18,7 +18,10 @@ export async function deploySyncOverride(
   try {
     const parsed = dockerParseComposeServices(workdir, appCfg.compose ?? [])
     const services = deployBuildOverrideServices(parsed, appCfg.domains)
-    await dockerWriteOverride(paths.overridesDir, app, services)
+    const written = await dockerWriteOverride(paths.overridesDir, app, services)
+    if (written instanceof Error) {
+      return written
+    }
   } catch (error) {
     return errorsToJibError(error)
   }
@@ -31,19 +34,31 @@ export async function deployLinkSecrets(
   workdir: string,
 ): Promise<JibError | undefined> {
   const src = join(paths.secretsDir, app, '.env')
+  const dest = join(workdir, '.env')
   try {
     await stat(src)
   } catch (error) {
     const code = typeof error === 'object' && error && 'code' in error ? error.code : undefined
     if (code === 'ENOENT') {
-      return
+      // Removing a managed env file must also remove its generated link.
+      // Preserve any local env file or link that jib does not own.
+      try {
+        if ((await readlink(dest)) === src) {
+          await unlink(dest)
+        }
+      } catch (linkError) {
+        const linkCode = (linkError as NodeJS.ErrnoException).code
+        if (linkCode !== 'ENOENT' && linkCode !== 'EINVAL') {
+          return errorsToJibError(linkError)
+        }
+      }
+      return undefined
     }
     const message = error instanceof Error ? error.message : String(error)
     return new InternalError(message, { cause: error })
   }
 
   try {
-    const dest = join(workdir, '.env')
     await unlink(dest).catch(() => undefined)
     await symlink(src, dest)
   } catch (error) {

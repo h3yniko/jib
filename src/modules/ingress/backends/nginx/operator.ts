@@ -1,4 +1,5 @@
-import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { InternalError, type JibError, errorsToJibError } from '@jib/errors'
 import { type ExecFn, ingressGetExec } from '../../exec.ts'
@@ -41,15 +42,34 @@ export function ingressCreateNginxOperator(deps: IngressNginxDeps): IngressOpera
 
   return {
     async claim(claim, onProgress) {
+      const rendered = await renderSites(claim, certExists)
+      if (rendered instanceof Error) {
+        return rendered
+      }
+      try {
+        const dir = ingressNginxAppConfDir(deps.nginxDir, claim.app)
+        const files = await readdir(dir)
+        if (files.length === rendered.size && files.every((file) => rendered.has(file))) {
+          const contents = await Promise.all(files.map((file) => readFile(join(dir, file), 'utf8')))
+          if (files.every((file, index) => rendered.get(file) === contents[index])) {
+            return undefined
+          }
+        }
+      } catch (error) {
+        if (!isMissingPathError(error)) {
+          return errorsToJibError(error)
+        }
+      }
       const staged = await stageNginxAppDir(deps.nginxDir, claim.app)
       if (staged instanceof Error) {
         return staged
       }
       try {
         onProgress?.({ app: claim.app, message: `writing ${claim.domains.length} config(s)` })
-        const writeError = await renderAndWrite(deps.nginxDir, claim, certExists)
-        if (writeError) {
-          return await restoreAfterFailure(staged, writeError)
+        const dir = ingressNginxAppConfDir(deps.nginxDir, claim.app)
+        await mkdir(dir, { recursive: true, mode: 0o755 })
+        for (const [filename, body] of rendered) {
+          await writeFile(join(dir, filename), body, { mode: 0o644 })
         }
         onProgress?.({ app: claim.app, message: 'running nginx -t + reload' })
         const reloadError = await reloadNginx(exec)
@@ -95,16 +115,13 @@ async function restoreAfterFailure(staged: StagedAppDir, failure: JibError): Pro
   )
 }
 
-/** Renders all app site configs into a fresh nginx app directory. */
-async function renderAndWrite(
-  nginxDir: string,
+/** Resolves certificate state and renders the complete desired app directory. */
+async function renderSites(
   claim: IngressClaim,
   certExists: IngressCertExistsFn,
-): Promise<InternalError | undefined> {
-  const dir = ingressNginxAppConfDir(nginxDir, claim.app)
+): Promise<Map<string, string> | JibError> {
   try {
-    await rm(dir, { recursive: true, force: true })
-    await mkdir(dir, { recursive: true, mode: 0o755 })
+    const files = new Map<string, string>()
     for (const domain of claim.domains) {
       const hasSSL = domain.isTunnel ? false : await certExists(domain.host)
       if (hasSSL instanceof Error) {
@@ -118,9 +135,9 @@ async function renderAndWrite(
         isTunnel: domain.isTunnel,
         hasSSL,
       })
-      await writeFile(join(dir, ingressNginxConfFilename(domain.host)), body, { mode: 0o644 })
+      files.set(ingressNginxConfFilename(domain.host), body)
     }
-    return undefined
+    return files
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return new InternalError(`write nginx config for ${claim.app}: ${message}`, { cause: error })
@@ -139,9 +156,12 @@ async function stageNginxAppDir(
   app: string,
 ): Promise<StagedAppDir | InternalError> {
   const current = ingressNginxAppConfDir(nginxDir, app)
-  const backup = `${current}.bak`
+  // The nginx include matches */*.conf. Keep backups one directory deeper
+  // so validation and reload see only the new desired routes.
+  const stagingDir = join(nginxDir, '.staging')
+  const backup = join(stagingDir, `${app}-${randomUUID()}`)
   try {
-    await rm(backup, { recursive: true, force: true })
+    await mkdir(stagingDir, { recursive: true, mode: 0o755 })
     await rename(current, backup)
     return { current, backup, existed: true }
   } catch (error) {

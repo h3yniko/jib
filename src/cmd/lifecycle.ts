@@ -9,7 +9,7 @@ const lifecycleCommands = [
     command: 'start <app>',
     run: deployStartApp,
     aliases: ['up'],
-    describe: 'Start containers with current env/config; no source sync or rebuild',
+    describe: 'Start containers and reconcile ingress with current config; no sync or rebuild',
     success: 'started',
   },
   {
@@ -23,14 +23,14 @@ const lifecycleCommands = [
     command: 'restart <app>',
     run: deployRestartApp,
     aliases: [],
-    describe: 'Recreate containers with current env/config; no source sync or rebuild',
+    describe: 'Recreate containers and reconcile ingress with current config; no sync or rebuild',
     success: 'restarted',
   },
   {
     command: 'rebuild <app>',
     run: deployRebuildApp,
     aliases: [],
-    describe: 'Build from the local checkout and recreate containers; no source sync',
+    describe: 'Build from the local checkout, recreate containers, and reconcile ingress; no sync',
     success: 'rebuilt',
   },
 ]

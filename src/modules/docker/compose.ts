@@ -35,6 +35,7 @@ export interface DockerCompose {
     service?: string,
     opts?: { follow?: boolean; tail?: number },
   ): Promise<InternalError | undefined>
+  resolvedConfig(): Promise<Record<string, unknown> | InternalError>
   ps(): Promise<ExecResult | InternalError>
 }
 
@@ -125,6 +126,16 @@ export function dockerCreateCompose(cfg: ComposeConfig): DockerCompose {
       }
       return runResult(cfg, runner, args)
     },
+    resolvedConfig() {
+      return resolveComposeConfig(cfg, runner, [
+        'docker',
+        ...baseArgs(),
+        ...envArgs(),
+        'config',
+        '--format',
+        'json',
+      ])
+    },
     async ps() {
       return captureResult(cfg, runner, ['docker', ...baseArgs(), 'ps', '--format', 'json'])
     },
@@ -167,5 +178,26 @@ async function captureResult(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return new InternalError(`${args.slice(0, 4).join(' ')} failed: ${message}`, { cause: error })
+  }
+}
+
+/** Owns the Compose model inspection command and response validation. */
+async function resolveComposeConfig(
+  cfg: ComposeConfig,
+  runner: DockerExec,
+  args: string[],
+): Promise<Record<string, unknown> | InternalError> {
+  const result = await captureResult(cfg, runner, args)
+  if (result instanceof Error) {
+    return result
+  }
+  try {
+    const model: unknown = JSON.parse(result.stdout)
+    if (!model || typeof model !== 'object' || Array.isArray(model)) {
+      return new InternalError('docker compose config returned an invalid model')
+    }
+    return model as Record<string, unknown>
+  } catch (error) {
+    return new InternalError('docker compose config returned invalid JSON', { cause: error })
   }
 }

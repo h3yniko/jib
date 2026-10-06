@@ -3,9 +3,9 @@ import { z } from 'zod'
 export const CURRENT_SCHEMA_VERSION = 1
 
 /**
- * Persisted deploy state for a single app. Trimmed to only the fields jib
- * actually reads: deployed SHA/workdir for the current deploy, plus a
- * debug-only last-deploy summary a human can `cat`. No rollback pointers
+ * Persisted deploy and reconciliation state for a single app: deployed
+ * SHA/workdir, successful application fingerprints, and a debug-only
+ * last-deploy summary a human can `cat`. No rollback pointers
  * (rollback is deliberately absent — fix-forward only). No auto-pinning
  * counter (nothing gated on it).
  */
@@ -17,6 +17,14 @@ export const AppStateSchema = z.object({
   last_deploy: z.string().default(''),
   last_deploy_status: z.string().default(''),
   last_deploy_error: z.string().default(''),
+  // Derived records of successful application, never configuration inputs.
+  applied: z
+    .object({
+      build: z.string().optional(),
+      runtime: z.string().optional(),
+      ingress: z.string().optional(),
+    })
+    .default({}),
 })
 
 export type AppState = z.infer<typeof AppStateSchema>

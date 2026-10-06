@@ -20,6 +20,16 @@ jib update
 
 The migration preserves other `/etc/docker/daemon.json` settings and does **not** prune cache or restart Docker. Schedule `sudo systemctl restart docker` to activate a new setting; this may interrupt running containers. GC is not a hard quota and cannot remove cache still marked in use. Journald retention is configured separately.
 
+## Applying configuration changes
+
+Edit `/opt/jib/config.yml`, then run `jib restart <app>` (or `jib start <app>`). Both recreate containers using current Compose and managed env inputs, run configured health checks, and reconcile nginx routes and global ingress settings. Changing a hostname removes its old route; an empty `domains` list removes all routes for the app. Missing or manually edited generated nginx files are repaired. Unchanged nginx files do not trigger a reload.
+
+`jib deploy <app>` syncs source, builds, and applies the same reconciliation. `jib rebuild <app>` does this from the local checkout without syncing source. Start and restart do not build: if resolved build inputs changed, they apply runtime and routing changes, then exit with a message requiring rebuild or deploy. Existing installations have no recorded build baseline until their first successful rebuild or deploy, so build-backed apps may receive that message once after upgrading.
+
+Config and managed input files remain authoritative. State files store fingerprints of successfully applied build, runtime, and ingress stages, without storing resolved env values. Failures return an error and leave incomplete stages pending for the next command. Changing a runtime-only env value does not require rebuilding; a value used in Compose build arguments does.
+
+Config-only edits take effect on the next start, restart, rebuild, or deploy. The watcher continues to deploy on source revisions; it does not automatically start stopped apps after config edits. Source code and Dockerfile changes require rebuild or deploy. DNS, certificates, and Cloudflare-managed tunnel hostnames must be configured separately.
+
 ## Releases
 
 <!-- Preset v9 is intentional: v10 needs a newer writer than semantic-release currently ships. -->

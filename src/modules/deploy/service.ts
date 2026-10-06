@@ -1,8 +1,9 @@
-import type { App, Config } from '@jib/config'
-import { type DockerCompose, dockerComposeFor } from '@jib/docker'
+import type { Config } from '@jib/config'
+import { dockerComposeFor } from '@jib/docker'
 import { InternalError, type JibError, NotFoundError, errorsToJibError } from '@jib/errors'
 import { type Paths, pathsRepoPath } from '@jib/paths'
 import { stateAcquireLock, stateRecordFailure } from '@jib/state'
+import { reconcileApp } from '@/flows/reconcile/app.ts'
 import { deployRunFlow } from './flow.ts'
 import { deployLinkSecrets, deploySyncOverride } from './support.ts'
 import type { DeployCmd, DeployDeps, DeployResult, DeployProgress } from './types.ts'
@@ -27,7 +28,7 @@ export async function deployApp(
     return new InternalError(`acquire lock for ${cmd.app}: ${release.message}`, { cause: release })
   }
 
-  const result = await deployRunFlow(deps, cmd, appCfg, emit)
+  const result = await deployRunFlow(deps, cmd, emit)
   if (result instanceof Error) {
     deps.log.error(`deploy ${cmd.app} failed: ${result.message}`)
     const recordFailureError = await stateRecordFailure(deps.stateDir, cmd.app, result.message)
@@ -55,9 +56,7 @@ type AppContext = { cfg: Config; paths: Paths }
 
 /** Starts containers with current env/config without syncing source or rebuilding. */
 export function deployStartApp(ctx: AppContext, app: string): Promise<JibError | undefined> {
-  return withAppCompose(ctx, app, (compose, appCfg) =>
-    compose.up({ services: appCfg.services ?? [], noBuild: true }),
-  )
+  return withAppCompose(ctx, app, 'start')
 }
 
 /** Recreates containers to apply env/config changes, just like starting them. */
@@ -67,25 +66,19 @@ export function deployRestartApp(ctx: AppContext, app: string): Promise<JibError
 
 /** Stops containers while retaining persistent data and app configuration. */
 export function deployStopApp(ctx: AppContext, app: string): Promise<JibError | undefined> {
-  return withAppCompose(ctx, app, (compose) => compose.down(false))
+  return withAppCompose(ctx, app, 'stop')
 }
 
 /** Builds from the local checkout, then recreates containers without syncing source. */
 export function deployRebuildApp(ctx: AppContext, app: string): Promise<JibError | undefined> {
-  return withAppCompose(ctx, app, async (compose, appCfg) => {
-    const error = await compose.build()
-    if (error) {
-      return error
-    }
-    return compose.up({ services: appCfg.services ?? [], noBuild: true })
-  })
+  return withAppCompose(ctx, app, 'rebuild')
 }
 
 /** Owns Compose preparation and keeps the app lock held until the operation completes. */
 async function withAppCompose(
   ctx: AppContext,
   app: string,
-  run: (compose: DockerCompose, appCfg: App) => Promise<JibError | undefined>,
+  operation: 'start' | 'stop' | 'rebuild',
 ): Promise<JibError | undefined> {
   const appCfg = ctx.cfg.apps[app]
   if (!appCfg) {
@@ -98,6 +91,9 @@ async function withAppCompose(
     }
     try {
       const workdir = pathsRepoPath(ctx.paths, app, appCfg.repo)
+      if (operation !== 'stop') {
+        return await reconcileApp(ctx, { app, workdir, rebuild: operation === 'rebuild' })
+      }
       const overrideError = await deploySyncOverride(ctx.paths, app, appCfg, workdir)
       if (overrideError) {
         return overrideError
@@ -110,7 +106,7 @@ async function withAppCompose(
       if (compose instanceof Error) {
         return compose
       }
-      return await run(compose, appCfg)
+      return await compose.down(false)
     } finally {
       await release()
     }

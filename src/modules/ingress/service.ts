@@ -31,7 +31,7 @@ export async function ingressClaim(
 ): Promise<JibError | undefined> {
   const claim = ingressBuildClaim(app, appCfg)
   if (!claim) {
-    return undefined
+    return await operator.release(app, onProgress)
   }
   if (claim instanceof Error) {
     return claim
