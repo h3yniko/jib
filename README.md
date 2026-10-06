@@ -14,6 +14,12 @@ This installs the `jib` CLI.
 jib update
 ```
 
+## Docker build cache
+
+`sudo jib migrate` configures Docker's default builder GC target to 10% of the **total filesystem capacity** containing Docker's data directory, capped at 20 GB. It does not use current free space, which fluctuates, or override existing GC targets, disabled GC, or custom policies. This is a one-time setting; resize the disk or move Docker's data directory and you may need to adjust it manually.
+
+The migration preserves other `/etc/docker/daemon.json` settings and does **not** prune cache or restart Docker. Schedule `sudo systemctl restart docker` to activate a new setting; this may interrupt running containers. GC is not a hard quota and cannot remove cache still marked in use. Journald retention is configured separately.
+
 ## Releases
 
 <!-- Preset v9 is intentional: v10 needs a newer writer than semantic-release currently ships. -->

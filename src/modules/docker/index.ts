@@ -28,6 +28,7 @@ export {
 export { dockerFindUnsafeBindMounts, type UnsafeBindMount } from './volume-safety.ts'
 export { dockerComposeFor } from './compose-for.ts'
 export { dockerCollectContainerStatus, type DockerContainerStatus } from './status.ts'
+export { dockerBuildCacheTarget, dockerConfigureBuildCacheResult } from './cache-gc.ts'
 export {
   dockerEnsureInstalledResult,
   dockerRuntimeReady,
